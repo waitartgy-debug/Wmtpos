@@ -6,39 +6,31 @@ import os
 # --- Page Config ---
 st.set_page_config(page_title="WMT Mobile POS Pro", layout="wide", page_icon="📱")
 
-# --- Database Setup (Internal CSV) ---
-DATA_FILE = "wmt_pos_v4.csv"
-if not os.path.exists(DATA_FILE):
-    # Customer Name ကို Column အသစ်အနေနဲ့ ထည့်ထားပါတယ်
-    cols = ['id', 'customer', 'item_name', 'barcode', 'qty', 'cost', 'sell', 'total', 'profit', 'date', 'time', 'staff', 'payment']
-    pd.DataFrame(columns=cols).to_csv(DATA_FILE, index=False)
+# --- Database Files ---
+STOCK_FILE = "wmt_stock_v1.csv"
+SALES_FILE = "wmt_sales_v1.csv"
 
-def load_data():
-    return pd.read_csv(DATA_FILE)
+# ဖိုင်မရှိသေးရင် အသစ်ဆောက်ပေးခြင်း
+for file, cols in zip([STOCK_FILE, SALES_FILE], 
+                     [['barcode', 'item_name', 'category', 'stock_qty', 'cost', 'sell'],
+                      ['id', 'customer', 'item_name', 'barcode', 'qty', 'cost', 'sell', 'total', 'profit', 'date', 'time', 'staff', 'payment']]):
+    if not os.path.exists(file):
+        pd.DataFrame(columns=cols).to_csv(file, index=False)
 
-def save_data(rows):
-    df = load_data()
-    df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
+def load_data(file): return pd.read_csv(file)
+def save_data(file, df): df.to_csv(file, index=False)
 
-# --- Styling ---
-st.markdown("""
-    <style>
-    .stTextInput>div>div>input { background-color: #f0f2f6; border-radius: 10px; }
-    .stButton>button { border-radius: 10px; background-image: linear-gradient(to right, #1e3c72, #2a5298); color: white; height: 3.5em; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- Session State ---
+if 'auth' not in st.session_state: st.session_state.update({'auth': False, 'user': None, 'role': None, 'cart': []})
 
-# --- Login & Authentication ---
-if 'auth' not in st.session_state:
-    st.session_state.update({'auth': False, 'role': None, 'user': None, 'cart': []})
-
+# --- Logo & Styling ---
 LOGO_URL = "https://drive.google.com/thumbnail?id=1S-ga29FKEi5ekqDAeJ2F1dDENWUTxUvP&sz=w500"
 
+# --- Login System ---
 if not st.session_state.auth:
     st.image(LOGO_URL, width=120)
-    st.title("WMT Mobile POS")
-    with st.form("login_gate"):
+    st.title("WMT Mobile POS Login")
+    with st.form("login"):
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
         if st.form_submit_button("ဝင်မည်"):
@@ -48,103 +40,93 @@ if not st.session_state.auth:
             elif u == "staff1" and p == "wmtstaff456":
                 st.session_state.update({'auth': True, 'role': 'staff', 'user': 'Staff-01'})
                 st.rerun()
-            else: st.error("❌ မှားယွင်းနေပါသည်။")
     st.stop()
 
-# --- Sidebar ---
+# --- Navigation ---
 st.sidebar.image(LOGO_URL, width=80)
-st.sidebar.markdown(f"**အသုံးပြုသူ:** {st.session_state.user}")
-menu = st.sidebar.radio("သွားရောက်လိုသည့်နေရာ", ["📊 Dashboard", "🛒 အရောင်းဖွင့်ရန်", "📋 မှတ်တမ်း"])
+st.sidebar.markdown(f"👤 **{st.session_state.user}**")
+menu = st.sidebar.radio("Main Menu", ["📊 Dashboard", "📦 ပစ္စည်းစာရင်းသွင်းရန်", "🛒 အရောင်းဖွင့်ရန်", "📋 အရောင်းမှတ်တမ်း"])
 
 # --- 1. Dashboard ---
 if menu == "📊 Dashboard":
     st.header("📊 ယနေ့ လုပ်ငန်းအခြေအနေ")
-    df = load_data()
+    sdf = load_data(SALES_FILE)
+    stdf = load_data(STOCK_FILE)
     today = datetime.now().strftime("%Y-%m-%d")
-    tdf = df[df['date'] == today]
+    tdf = sdf[sdf['date'] == today]
     
     c1, c2, c3 = st.columns(3)
     c1.metric("💰 ယနေ့ရောင်းရငွေ", f"{tdf['total'].sum():,.0f} MMK")
     if st.session_state.role == 'admin':
         c2.metric("📈 ယနေ့အမြတ်", f"{tdf['profit'].sum():,.0f} MMK")
-    c3.metric("📦 ရောင်းချမှုပေါင်း", f"{len(tdf)} ခု")
+    c3.metric("⚠️ လက်ကျန်နည်းသောပစ္စည်း", len(stdf[stdf['stock_qty'] < 3]))
     
-    st.subheader("🕒 လတ်တလော အရောင်းမှတ်တမ်း")
-    st.dataframe(df.tail(15), use_container_width=True)
+    st.subheader("📦 လက်ရှိပစ္စည်းစာရင်း (Stock List)")
+    st.dataframe(stdf, use_container_width=True)
 
-# --- 2. POS System ---
-elif menu == "🛒 အရောင်းဖွင့်ရန်":
-    st.header("🛒 အရောင်းဘောင်ချာအသစ်")
+# --- 2. Inventory (ပစ္စည်းစာရင်းသွင်းရန်) ---
+elif menu == "📦 ပစ္စည်းစာရင်းသွင်းရန်":
+    st.header("📦 ပစ္စည်းအသစ်ထည့်ခြင်း / Stock ဖြည့်ခြင်း")
+    stdf = load_data(STOCK_FILE)
     
-    # Customer အချက်အလက်
-    with st.expander("👤 ဝယ်သူအချက်အလက် (မထည့်လည်းရသည်)", expanded=True):
-        cus_name = st.text_input("ဝယ်သူအမည်", placeholder="ဥပမာ - ကိုမောင်မောင်")
-    
-    # ပစ္စည်းအချက်အလက်
-    with st.container():
-        c1, c2 = st.columns([2, 2])
-        item_name = c1.text_input("📦 ပစ္စည်းအမည်", placeholder="ဥပမာ - Redmi Note 13")
-        barcode_no = c2.text_input("🔍 Barcode Scan", placeholder="Barcode ဖတ်ရန် ဤနေရာကိုနှိပ်ပါ")
+    with st.form("inventory_form"):
+        col1, col2 = st.columns(2)
+        b_code = col1.text_input("🔍 Barcode Scan ဖတ်ပါ")
+        i_name = col2.text_input("📦 ပစ္စည်းအမည်")
+        cat = st.selectbox("📁 အမျိုးအစား", ["Handset", "Accessory", "Service", "Software"])
         
         c3, c4, c5 = st.columns(3)
-        qty = c3.number_input("အရေအတွက်", min_value=1, value=1)
-        sell = c4.number_input("ရောင်းစျေး (ကျပ်)", min_value=0)
-        cost = 0
-        if st.session_state.role == 'admin':
-            cost = c5.number_input("အရင်းစျေး (ကျပ်)", min_value=0)
+        s_qty = c3.number_input("🔢 အရေအတွက်သွင်းရန်", min_value=1, value=1)
+        c_price = c4.number_input("📉 အရင်းစျေး (၁ ခုစာ)", min_value=0)
+        s_price = c5.number_input("💵 ရောင်းစျေး (၁ ခုစာ)", min_value=0)
+        
+        if st.form_submit_button("✅ စာရင်းသွင်းမည်"):
+            if not b_code or not i_name:
+                st.error("Barcode နှင့် ပစ္စည်းအမည် ထည့်ပေးပါ")
+            else:
+                if b_code in stdf['barcode'].astype(str).values:
+                    # ရှိပြီးသားဆိုရင် stock ပဲတိုးမယ်
+                    stdf.loc[stdf['barcode'].astype(str) == b_code, 'stock_qty'] += s_qty
+                    stdf.loc[stdf['barcode'].astype(str) == b_code, 'cost'] = c_price
+                    stdf.loc[stdf['barcode'].astype(str) == b_code, 'sell'] = s_price
+                    st.info("ရှိပြီးသားပစ္စည်းတွင် အရေအတွက် တိုးလိုက်ပါပြီ။")
+                else:
+                    # အသစ်ဆိုရင် အသစ်ထည့်မယ်
+                    new_item = pd.DataFrame([{'barcode': b_code, 'item_name': i_name, 'category': cat, 'stock_qty': s_qty, 'cost': c_price, 'sell': s_price}])
+                    stdf = pd.concat([stdf, new_item], ignore_index=True)
+                    st.success("ပစ္စည်းအသစ် ထည့်သွင်းပြီးပါပြီ။")
+                save_data(STOCK_FILE, stdf)
+
+# --- 3. POS (အရောင်းဖွင့်ရန်) ---
+elif menu == "🛒 အရောင်းဖွင့်ရန်":
+    st.header("🛒 အရောင်းဘောင်ချာ")
+    stdf = load_data(STOCK_FILE)
+    
+    cus = st.text_input("👤 ဝယ်သူအမည်", value="Guest")
+    scan = st.text_input("🔍 Scan Barcode (ပစ္စည်းရောင်းရန်)")
+    
+    if scan:
+        item = stdf[stdf['barcode'].astype(str) == scan]
+        if not item.empty:
+            i_row = item.iloc[0]
+            st.success(f"တွေ့ရှိသည်: {i_row['item_name']} (လက်ကျန်: {i_row['stock_qty']})")
             
-        pay = st.selectbox("ငွေပေးချေမှု", ["Cash", "KPay", "Wave", "AYA Pay"])
+            with st.container():
+                c1, c2, c3 = st.columns(3)
+                s_price = c1.number_input("ရောင်းစျေး", value=float(i_row['sell']))
+                qty_to_sell = c2.number_input("အရေအတွက်", min_value=1, max_value=int(i_row['stock_qty']), value=1)
+                pay_method = c3.selectbox("ငွေချေမှု", ["Cash", "KPay", "Wave"])
+                
+                if st.button("➕ ခြင်းတောင်းထဲထည့်မည်"):
+                    st.session_state.cart.append({
+                        'customer': cus, 'item_name': i_row['item_name'], 'barcode': scan, 
+                        'qty': qty_to_sell, 'cost': i_row['cost'], 'sell': s_price, 'payment': pay_method
+                    })
+                    st.rerun()
+        else:
+            st.error("❌ ဤ Barcode မှာ Stock စာရင်းထဲတွင် မရှိသေးပါ။ အရင်စာရင်းသွင်းပါ။")
 
-        if st.button("➕ ခြင်းတောင်းထဲထည့်မည်"):
-            if (item_name or barcode_no) and sell > 0:
-                st.session_state.cart.append({
-                    'customer': cus_name if cus_name else "Guest",
-                    'item_name': item_name if item_name else "Unknown Item",
-                    'barcode': barcode_no if barcode_no else "-",
-                    'qty': qty, 'cost': cost, 'sell': sell, 'payment': pay
-                })
-                st.rerun()
-
-    # Cart Table
     if st.session_state.cart:
         st.write("---")
-        st.subheader("🛒 လက်ရှိရောင်းချမည့်စာရင်း")
-        cart_df = pd.DataFrame(st.session_state.cart)
-        st.table(cart_df[['customer', 'item_name', 'barcode', 'qty', 'sell', 'payment']])
-        
-        g_total = (cart_df['sell'] * cart_df['qty']).sum()
-        st.markdown(f"### 💵 စုစုပေါင်းကျသင့်ငွေ: **{g_total:,.0f} MMK**")
-        
-        if st.button("✅ စာရင်းသိမ်းမည်"):
-            tid = f"WMT{datetime.now().strftime('%y%m%d%H%M%S')}"
-            dt, tm = datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%I:%M %p")
-            
-            final_rows = []
-            for r in st.session_state.cart:
-                final_rows.append({
-                    'id': tid, 'customer': r['customer'], 'item_name': r['item_name'], 
-                    'barcode': r['barcode'], 'qty': r['qty'], 'cost': r['cost'], 
-                    'sell': r['sell'], 'total': r['sell'] * r['qty'],
-                    'profit': (r['sell'] - r['cost']) * r['qty'],
-                    'date': dt, 'time': tm, 'staff': st.session_state.user, 'payment': r['payment']
-                })
-            save_data(final_rows)
-            st.session_state.cart = []
-            st.success("✅ စာရင်းသိမ်းပြီးပါပြီ")
-            st.rerun()
-
-# --- 3. Full Logs ---
-elif menu == "📋 မှတ်တမ်း":
-    st.header("📋 စုစုပေါင်း အရောင်းမှတ်တမ်း")
-    df = load_data()
-    # ရှာဖွေနိုင်သည့်စနစ်
-    search = st.text_input("🔍 ဝယ်သူအမည် သို့မဟုတ် Barcode ဖြင့်ရှာရန်")
-    if search:
-        df = df[df['customer'].str.contains(search, case=False) | df['barcode'].str.contains(search, case=False)]
-    
-    st.dataframe(df, use_container_width=True)
-    st.download_button("📥 Excel ထုတ်ယူရန်", df.to_csv(index=False).encode('utf-8-sig'), "WMT_Sales_Export.csv", "text/csv")
-
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.auth = False
-    st.rerun()
+        cdf = pd.DataFrame(st.session_state.cart)
+        st.table(cdf
